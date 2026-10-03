@@ -1,10 +1,13 @@
 from flask import Flask, request, jsonify, send_from_directory
 import json, os, time, datetime
 
-app = Flask(__name__, static_folder='/content')
-USERS_FILE = '/content/drive/MyDrive/swill_users/users.json'
-MESSAGES_FILE = '/content/drive/MyDrive/swill_users/messages.json'
-CHATS_FILE = '/content/drive/MyDrive/swill_users/chats.json'
+# Универсальный путь: папка, где лежит server.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(__name__, static_folder=BASE_DIR)
+USERS_FILE = os.path.join(BASE_DIR, 'users.json')
+MESSAGES_FILE = os.path.join(BASE_DIR, 'messages.json')
+CHATS_FILE = os.path.join(BASE_DIR, 'chats.json')
 
 def load_json(path, default):
     if not os.path.exists(path): return default
@@ -18,11 +21,11 @@ def save_json(path, data):
 
 @app.route('/')
 def root():
-    return send_from_directory('/content', 'index.html')
+    return send_from_directory(BASE_DIR, 'index.html')
 
 @app.route('/<path:filename>')
 def static_file(filename):
-    return send_from_directory('/content', filename)
+    return send_from_directory(BASE_DIR, filename)
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -196,4 +199,5 @@ def reset_device():
     return jsonify({'ok': True, 'message': 'Привязка сброшена.'})
 
 if __name__ == '__main__':
-    app.run(port=8000, host='0.0.0.0')
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port)
