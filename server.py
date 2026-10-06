@@ -1,23 +1,55 @@
 from flask import Flask, request, jsonify, send_from_directory
 import json, os, time, datetime
+import urllib.request
 
-# Универсальный путь: папка, где лежит server.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ============ НАСТРОЙКИ GIST ============
+GIST_ID = "99aa3e189f2778cf1e8c6a1802bc737e"
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')  # токен берётся из Render Environment
+# =======================================
+
 app = Flask(__name__, static_folder=BASE_DIR)
-USERS_FILE = os.path.join(BASE_DIR, 'users.json')
-MESSAGES_FILE = os.path.join(BASE_DIR, 'messages.json')
-CHATS_FILE = os.path.join(BASE_DIR, 'chats.json')
 
-def load_json(path, default):
-    if not os.path.exists(path): return default
+def load_db():
     try:
-        with open(path, 'r', encoding='utf-8') as f: return json.load(f)
-    except: return default
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            content = data['files']['db.json']['content']
+            return json.loads(content) if content.strip() else {"users": {}, "chats": [], "messages": []}
+    except Exception as e:
+        print(f"Ошибка чтения Gist: {e}")
+        return {"users": {}, "chats": [], "messages": []}
 
-def save_json(path, data):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def save_db(db):
+    try:
+        body = json.dumps({
+            "files": {
+                "db.json": {"content": json.dumps(db, ensure_ascii=False)}
+            }
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            data=body,
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json"
+            },
+            method='PATCH'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception as e:
+        print(f"Ошибка записи Gist: {e}")
+        return False
 
 @app.route('/')
 def root():
@@ -36,7 +68,8 @@ def register():
     device_id = data.get('deviceId', '').strip()
     if not email or not name or not pwd_hash or not device_id:
         return jsonify({'ok': False, 'error': 'Заполните все поля'}), 400
-    users = load_json(USERS_FILE, {})
+    db = load_db()
+    users = db.get('users', {})
     if email in users:
         return jsonify({'ok': False, 'error': 'Такой email уже зарегистрирован'}), 400
     user_id = 'U' + str(int(time.time() * 1000))[-8:]
@@ -45,7 +78,9 @@ def register():
         'passwordHash': pwd_hash, 'deviceId': device_id,
         'createdAt': datetime.datetime.utcnow().isoformat()
     }
-    save_json(USERS_FILE, users)
+    db['users'] = users
+    if not save_db(db):
+        return jsonify({'ok': False, 'error': 'Ошибка сохранения'}), 500
     return jsonify({'ok': True})
 
 @app.route('/api/login', methods=['POST'])
@@ -56,8 +91,8 @@ def login():
     device_id = data.get('deviceId', '').strip()
     if not email or not pwd_hash or not device_id:
         return jsonify({'ok': False, 'error': 'Введите email и пароль'}), 400
-    users = load_json(USERS_FILE, {})
-    user = users.get(email)
+    db = load_db()
+    user = db.get('users', {}).get(email)
     if not user or user.get('passwordHash') != pwd_hash:
         return jsonify({'ok': False, 'error': 'Неверный email или пароль'}), 401
     saved_device = user.get('deviceId', '')
@@ -71,9 +106,9 @@ def login():
 @app.route('/api/users', methods=['GET'])
 def get_users():
     my_id = request.args.get('myId', '').strip()
-    users = load_json(USERS_FILE, {})
+    db = load_db()
     result = []
-    for email, u in users.items():
+    for email, u in db.get('users', {}).items():
         if u.get('id') == my_id: continue
         result.append({'id': u['id'], 'name': u['name']})
     return jsonify({'ok': True, 'users': result})
@@ -81,8 +116,8 @@ def get_users():
 @app.route('/api/chats', methods=['GET'])
 def get_chats():
     my_id = request.args.get('myId', '').strip()
-    chats = load_json(CHATS_FILE, [])
-    my_chats = [c for c in chats if my_id in c.get('members', [])]
+    db = load_db()
+    my_chats = [c for c in db.get('chats', []) if my_id in c.get('members', [])]
     return jsonify({'ok': True, 'chats': my_chats})
 
 @app.route('/api/chats', methods=['POST'])
@@ -98,18 +133,16 @@ def create_chat():
         return jsonify({'ok': False, 'error': 'Слишком длинное название'}), 400
     if chat_type not in ('group', 'channel'):
         chat_type = 'group'
-    chats = load_json(CHATS_FILE, [])
+    db = load_db()
     chat_id = 'C' + str(int(time.time() * 1000))[-8:]
-    chats.append({
-        'id': chat_id,
-        'name': name,
-        'type': chat_type,
-        'creatorId': creator_id,
-        'creatorName': creator_name,
+    db.setdefault('chats', []).append({
+        'id': chat_id, 'name': name, 'type': chat_type,
+        'creatorId': creator_id, 'creatorName': creator_name,
         'members': [creator_id],
         'createdAt': datetime.datetime.utcnow().isoformat()
     })
-    save_json(CHATS_FILE, chats)
+    if not save_db(db):
+        return jsonify({'ok': False, 'error': 'Ошибка сохранения'}), 500
     return jsonify({'ok': True, 'chatId': chat_id})
 
 @app.route('/api/chats/<chat_id>/join', methods=['POST'])
@@ -118,25 +151,24 @@ def join_chat(chat_id):
     user_id = data.get('userId', '').strip()
     if not user_id:
         return jsonify({'ok': False, 'error': 'Не авторизован'}), 400
-    chats = load_json(CHATS_FILE, [])
-    for c in chats:
+    db = load_db()
+    for c in db.get('chats', []):
         if c['id'] == chat_id:
             if user_id not in c.get('members', []):
                 c.setdefault('members', []).append(user_id)
-                save_json(CHATS_FILE, chats)
+                save_db(db)
             return jsonify({'ok': True})
     return jsonify({'ok': False, 'error': 'Чат не найден'}), 404
 
 @app.route('/api/chats/available', methods=['GET'])
 def available_chats():
     my_id = request.args.get('myId', '').strip()
-    chats = load_json(CHATS_FILE, [])
+    db = load_db()
     result = []
-    for c in chats:
+    for c in db.get('chats', []):
         if my_id not in c.get('members', []):
             result.append({
-                'id': c['id'],
-                'name': c['name'],
+                'id': c['id'], 'name': c['name'],
                 'type': c.get('type', 'group'),
                 'membersCount': len(c.get('members', []))
             })
@@ -147,8 +179,8 @@ def get_messages():
     chat_id = request.args.get('chatId', '').strip()
     if not chat_id:
         return jsonify({'ok': True, 'messages': []})
-    messages = load_json(MESSAGES_FILE, [])
-    filtered = [m for m in messages if m.get('chatId') == chat_id]
+    db = load_db()
+    filtered = [m for m in db.get('messages', []) if m.get('chatId') == chat_id]
     return jsonify({'ok': True, 'messages': filtered[-100:]})
 
 @app.route('/api/messages', methods=['POST'])
@@ -162,24 +194,25 @@ def send_message():
         return jsonify({'ok': False, 'error': 'Пустое сообщение'}), 400
     if len(text) > 1000:
         return jsonify({'ok': False, 'error': 'Сообщение слишком длинное'}), 400
-    chats = load_json(CHATS_FILE, [])
-    chat = next((c for c in chats if c['id'] == chat_id), None)
+    db = load_db()
+    chat = next((c for c in db.get('chats', []) if c['id'] == chat_id), None)
     if not chat:
         return jsonify({'ok': False, 'error': 'Чат не найден'}), 404
     if from_id not in chat.get('members', []):
         return jsonify({'ok': False, 'error': 'Вы не участник'}), 403
     if chat.get('type') == 'channel' and chat.get('creatorId') != from_id:
         return jsonify({'ok': False, 'error': 'В канале пишет только владелец'}), 403
-    messages = load_json(MESSAGES_FILE, [])
-    messages.append({
+    db.setdefault('messages', []).append({
         'id': str(int(time.time() * 1000)),
         'chatId': chat_id,
         'from': from_id, 'fromName': from_name,
         'text': text,
         'time': datetime.datetime.utcnow().isoformat()
     })
-    if len(messages) > 1000: messages = messages[-1000:]
-    save_json(MESSAGES_FILE, messages)
+    if len(db['messages']) > 1000:
+        db['messages'] = db['messages'][-1000:]
+    if not save_db(db):
+        return jsonify({'ok': False, 'error': 'Ошибка сохранения'}), 500
     return jsonify({'ok': True})
 
 @app.route('/api/reset-device', methods=['POST'])
@@ -190,12 +223,12 @@ def reset_device():
     new_device_id = data.get('newDeviceId', '').strip()
     if not email or not pwd_hash or not new_device_id:
         return jsonify({'ok': False, 'error': 'Некорректные данные'}), 400
-    users = load_json(USERS_FILE, {})
-    user = users.get(email)
+    db = load_db()
+    user = db.get('users', {}).get(email)
     if not user or user.get('passwordHash') != pwd_hash:
         return jsonify({'ok': False, 'error': 'Неверный email или пароль'}), 401
     user['deviceId'] = new_device_id
-    save_json(USERS_FILE, users)
+    save_db(db)
     return jsonify({'ok': True, 'message': 'Привязка сброшена.'})
 
 if __name__ == '__main__':
