@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swill · Группы и каналы</title>
+<title>Swill · Мессенджер</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #0b0d12; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #d6e2ff; height: 100dvh; overflow: hidden; }
@@ -16,7 +16,7 @@
     .tab.active { background: #3e8aff; color: #fff; }
     .form { display: flex; flex-direction: column; gap: 14px; }
     .hidden { display: none !important; }
-    input, textarea, select { background: #11161f; border: 1px solid #2f3a52; border-radius: 14px; padding: 14px 18px; color: #d6e2ff; font-size: 15px; outline: none; width: 100%; font-family: inherit; }
+    input, textarea { background: #11161f; border: 1px solid #2f3a52; border-radius: 14px; padding: 14px 18px; color: #d6e2ff; font-size: 15px; outline: none; width: 100%; font-family: inherit; }
     input:focus, textarea:focus { border-color: #3e8aff; }
     input::placeholder, textarea::placeholder { color: #4a5a72; }
     .btn { background: #3e8aff; border: none; padding: 15px; border-radius: 14px; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 6px; }
@@ -33,6 +33,7 @@
     .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #3e8aff, #7ab0ff); display: flex; align-items: center; justify-content: center; font-weight: 600; color: #fff; font-size: 16px; flex-shrink: 0; }
     .avatar.small { width: 32px; height: 32px; font-size: 13px; }
     .avatar.channel { background: linear-gradient(135deg, #6a4cff, #9a7aff); }
+    .avatar.dm { background: linear-gradient(135deg, #7cdb9a, #4ccf7c); }
     .sidebar-header .info { flex: 1; min-width: 0; }
     .sidebar-header .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sidebar-header .status { font-size: 11px; color: #7cdb9a; }
@@ -45,6 +46,7 @@
     .user-item.active { background: #1e2a45; }
     .user-item .name { font-size: 14px; color: #d6e2ff; flex: 1; }
     .user-item .badge { font-size: 10px; color: #8695b0; background: #1a2130; padding: 2px 6px; border-radius: 6px; }
+    .user-item .write-btn { background: #3e8aff; border: none; color: #fff; font-size: 11px; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
     .section-title { color: #5a6a82; font-size: 11px; text-transform: uppercase; padding: 12px 12px 6px; letter-spacing: 0.5px; }
     .main-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .chat-header { background: #181c26; padding: 14px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2e3548; }
@@ -76,8 +78,7 @@
     .menu-btn { display: none; background: none; border: none; color: #d6e2ff; font-size: 22px; cursor: pointer; padding: 4px 8px; }
 </style>
 </head>
-<body>
-<div id="authScreen">
+<body><div id="authScreen">
     <div class="card">
         <h1>💬 Swill</h1>
         <div class="sub">Мессенджер</div>
@@ -122,10 +123,14 @@
             </div>
             <button class="create-btn" onclick="showCreateModal()">+ Создать группу/канал</button>
             <div class="user-list">
-                <div class="section-title">Мои чаты</div>
+                <div class="section-title">Личные сообщения</div>
+                <div id="dmList"></div>
+                <div class="section-title">Мои группы и каналы</div>
                 <div id="myChatsList"></div>
-                <div class="section-title">Найти чат</div>
+                <div class="section-title">Найти группу/канал</div>
                 <div id="availableChatsList"></div>
+                <div class="section-title">Пользователи</div>
+                <div id="usersList"></div>
             </div>
         </div>
         <div class="main-chat">
@@ -137,7 +142,7 @@
                 </div>
             </div>
             <div class="chat-messages" id="chatMessages">
-                <div class="empty-chat">Выберите группу или канал слева</div>
+                <div class="empty-chat">Выберите чат или пользователя слева</div>
             </div>
             <div class="chat-input" id="chatInputArea" style="display:none;">
                 <textarea id="msgInput" placeholder="Сообщение..." rows="1"></textarea>
@@ -166,11 +171,11 @@
     </div>
 </div>
 
-<script>
-(function() {
+<script>(function() {
     'use strict';
     var SK = 'swill_session', DK = 'swill_device_id';
     var currentUser = null, currentChatId = '', currentChat = null;
+    var currentDmId = '', currentDmPeer = null, mode = ''; // mode: 'chat' или 'dm'
     var pollInterval = null, lastHash = '', allChats = [];
 
     function getDeviceId() {
@@ -276,11 +281,18 @@
         document.getElementById('myName').textContent = currentUser.name;
         document.getElementById('myAvatar').textContent = getInitials(currentUser.name);
         loadChats();
+        loadDms();
+        loadUsers();
         if (pollInterval) clearInterval(pollInterval);
-        pollInterval = setInterval(function() { if (currentChatId) loadMessages(false); }, 2000);
+        pollInterval = setInterval(function() {
+            if (mode === 'chat' && currentChatId) loadMessages(false);
+            if (mode === 'dm' && currentDmId) loadDmMessages(false);
+        }, 2000);
         var input = document.getElementById('msgInput');
         input.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
     }
+
+    // ============ ГРУППЫ ============
     function loadChats() {
         fetch('/api/chats?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
@@ -293,7 +305,6 @@
                  '</div>';
             }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Пока нет чатов</div>';
         });
-
         fetch('/api/chats/available?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
             document.getElementById('availableChatsList').innerHTML = data.chats.map(function(c) {
@@ -303,39 +314,33 @@
                     '<div class="name">' + esc(c.name) + '</div>' +
                     '<div class="badge">' + c.membersCount + '</div>' +
                  '</div>';
-            }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Нет доступных чатов</div>';
+            }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Нет доступных</div>';
         });
     }
 
     window.openChat = function(chatId, el) {
+        mode = 'chat';
         currentChatId = chatId;
+        currentDmId = '';
         currentChat = allChats.find(function(c) { return c.id === chatId; });
         document.getElementById('chatTitle').textContent = currentChat ? currentChat.name : 'Чат';
         var subtitle = '';
-        if (currentChat) {
-            subtitle = (currentChat.type === 'channel' ? '📢 Канал' : '👥 Группа') + ' · ' + currentChat.members.length + ' участн.';
-        }
+        if (currentChat) subtitle = (currentChat.type === 'channel' ? '📢 Канал' : '👥 Группа') + ' · ' + currentChat.members.length + ' участн.';
         document.getElementById('chatSubtitle').textContent = subtitle;
         document.querySelectorAll('.user-item').forEach(function(i) { i.classList.remove('active'); });
         if (el) el.classList.add('active');
         lastHash = '';
         var inputArea = document.getElementById('chatInputArea');
-        if (currentChat && (currentChat.type === 'group' || currentChat.creatorId === currentUser.id)) {
-            inputArea.style.display = 'flex';
-        } else {
-            inputArea.style.display = 'none';
-        }
+        if (currentChat && (currentChat.type === 'group' || currentChat.creatorId === currentUser.id)) inputArea.style.display = 'flex';
+        else inputArea.style.display = 'none';
         document.getElementById('chatMessages').innerHTML = '<div class="empty-chat">Загрузка...</div>';
         loadMessages(true);
         if (window.innerWidth <= 600) document.getElementById('sidebar').classList.add('hidden-mobile');
     };
-    window.toggleSidebar = function() { document.getElementById('sidebar').classList.toggle('hidden-mobile'); };
 
     window.joinChat = function(chatId) {
         fetch('/api/chats/' + chatId + '/join', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ userId: currentUser.id })})
-            .then(function(r) { return r.json(); }).then(function(data) {
-                if (data.ok) loadChats();
-            });
+            .then(function(r) { return r.json(); }).then(function(data) { if (data.ok) loadChats(); });
     };
 
     function loadMessages(scrollToBottom) {
@@ -361,19 +366,95 @@
         }).catch(function(e) {});
     }
 
+    // ============ ЛИЧНЫЕ СООБЩЕНИЯ ============
+    function loadDms() {
+        fetch('/api/dm/list?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
+            if (!data.ok) return;
+            document.getElementById('dmList').innerHTML = data.dms.map(function(dm) {
+                return '<div class="user-item" onclick="openDm(\'' + dm.id + '\', \'' + esc(dm.peerName) + '\', \'' + dm.peerId + '\', this)">' +
+                    '<div class="avatar small dm">' + getInitials(dm.peerName) + '</div>' +
+                    '<div class="name">' + esc(dm.peerName) + '</div>' +
+                 '</div>';
+            }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Нет диалогов</div>';
+        });
+    }
+
+    function loadUsers() {
+        fetch('/api/users?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
+            if (!data.ok) return;
+            document.getElementById('usersList').innerHTML = data.users.map(function(u) {
+                return '<div class="user-item">' +
+                    '<div class="avatar small">' + getInitials(u.name) + '</div>' +
+                    '<div class="name">' + esc(u.name) + '</div>' +
+                    '<button class="write-btn" onclick="startDm(\'' + u.id + '\', \'' + esc(u.name) + '\')">Написать</button>' +
+                 '</div>';
+            }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Других пользователей нет</div>';
+        });
+    }
+
+    window.startDm = function(peerId, peerName) {
+        fetch('/api/dm/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ myId: currentUser.id, peerId: peerId })})
+            .then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok) { loadDms(); openDm(data.dmId, peerName, peerId, null); }
+            });
+    };
+
+    window.openDm = function(dmId, peerName, peerId, el) {
+        mode = 'dm';
+        currentDmId = dmId;
+        currentDmPeer = { id: peerId, name: peerName };
+        currentChatId = '';
+        document.getElementById('chatTitle').textContent = peerName;
+        document.getElementById('chatSubtitle').textContent = '💬 Личное сообщение';
+        document.querySelectorAll('.user-item').forEach(function(i) { i.classList.remove('active'); });
+        if (el) el.classList.add('active');
+        lastHash = '';
+        document.getElementById('chatInputArea').style.display = 'flex';
+        document.getElementById('chatMessages').innerHTML = '<div class="empty-chat">Загрузка...</div>';
+        loadDmMessages(true);
+        if (window.innerWidth <= 600) document.getElementById('sidebar').classList.add('hidden-mobile');
+    };
+
+    function loadDmMessages(scrollToBottom) {
+        if (!currentDmId) return;
+        fetch('/api/dm/messages?dmId=' + currentDmId).then(function(r) { return r.json(); }).then(function(data) {
+            if (!data.ok) return;
+            var messages = data.messages || [];
+            var hash = messages.map(function(m) { return m.id; }).join(',');
+            if (hash === lastHash && !scrollToBottom) return;
+            lastHash = hash;
+            var container = document.getElementById('chatMessages');
+            if (messages.length === 0) { container.innerHTML = '<div class="empty-chat">Начните переписку!</div>'; return; }
+            container.innerHTML = messages.map(function(m) {
+                var own = m.from === currentUser.id;
+                var time = new Date(m.time).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
+                return '<div class="msg ' + (own ? 'own' : 'other') + '">' +
+                    '<div>' + esc(m.text) + '</div>' +
+                    '<div class="msg-time">' + time + '</div>' +
+                '</div>';
+            }).join('');
+            if (scrollToBottom) container.scrollTop = container.scrollHeight;
+        }).catch(function(e) {});
+    }
+
     window.sendMessage = function() {
-        if (!currentChatId) return;
         var input = document.getElementById('msgInput');
         var text = input.value.trim();
         if (!text) return;
         var btn = document.getElementById('sendBtn');
         btn.disabled = true;
-        fetch('/api/messages', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ fromId: currentUser.id, fromName: currentUser.name, chatId: currentChatId, text: text })})
-            .then(function(r) { return r.json(); }).then(function(data) {
-                btn.disabled = false;
-                if (data.ok) { input.value = ''; loadMessages(true); }
-                else { alert(data.error); }
-            }).catch(function(e) { btn.disabled = false; });
+        var url, body;
+        if (mode === 'dm') {
+            url = '/api/dm/send';
+            body = { fromId: currentUser.id, fromName: currentUser.name, dmId: currentDmId, text: text };
+        } else {
+            url = '/api/messages';
+            body = { fromId: currentUser.id, fromName: currentUser.name, chatId: currentChatId, text: text };
+        }
+        fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+            .then(function(r) { return r.json(); }).then(function(data            btn.disabled = false;
+            if (data.ok) { input.value = ''; if (mode === 'dm') loadDmMessages(true); else loadMessages(true); }
+        }).catch(function(e) { btn.disabled = false; });
     };
 
     window.showCreateModal = function() { document.getElementById('createModal').classList.remove('hidden'); };
@@ -392,6 +473,8 @@
                 else { alert(data.error); }
             });
     };
+
+    window.toggleSidebar = function() { document.getElementById('sidebar').classList.toggle('hidden-mobile'); };
 
     var s = getSession();
     if (s && s.user) { currentUser = s.user; enterChat(); }
