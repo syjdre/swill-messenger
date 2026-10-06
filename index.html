@@ -78,7 +78,8 @@
     .menu-btn { display: none; background: none; border: none; color: #d6e2ff; font-size: 22px; cursor: pointer; padding: 4px 8px; }
 </style>
 </head>
-<body><div id="authScreen">
+<body>
+<div id="authScreen">
     <div class="card">
         <h1>💬 Swill</h1>
         <div class="sub">Мессенджер</div>
@@ -171,11 +172,12 @@
     </div>
 </div>
 
-<script>(function() {
+<script>
+(function() {
     'use strict';
     var SK = 'swill_session', DK = 'swill_device_id';
     var currentUser = null, currentChatId = '', currentChat = null;
-    var currentDmId = '', currentDmPeer = null, mode = ''; // mode: 'chat' или 'dm'
+    var currentDmId = '', currentDmPeer = null, mode = '';
     var pollInterval = null, lastHash = '', allChats = [];
 
     function getDeviceId() {
@@ -291,41 +293,29 @@
         var input = document.getElementById('msgInput');
         input.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
     }
-
-    // ============ ГРУППЫ ============
     function loadChats() {
         fetch('/api/chats?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
             allChats = data.chats || [];
             document.getElementById('myChatsList').innerHTML = allChats.map(function(c) {
                 var icon = c.type === 'channel' ? '📢' : '👥';
-                return '<div class="user-item" onclick="openChat(\'' + c.id + '\', this)">' +
-                    '<div class="avatar small ' + (c.type === 'channel' ? 'channel' : '') + '">' + icon + '</div>' +
-                    '<div class="name">' + esc(c.name) + '</div>' +
-                 '</div>';
+                return '<div class="user-item" onclick="openChat(\'' + c.id + '\', this)"><div class="avatar small ' + (c.type === 'channel' ? 'channel' : '') + '">' + icon + '</div><div class="name">' + esc(c.name) + '</div></div>';
             }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Пока нет чатов</div>';
         });
         fetch('/api/chats/available?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
             document.getElementById('availableChatsList').innerHTML = data.chats.map(function(c) {
                 var icon = c.type === 'channel' ? '📢' : '👥';
-                return '<div class="user-item" onclick="joinChat(\'' + c.id + '\')">' +
-                    '<div class="avatar small ' + (c.type === 'channel' ? 'channel' : '') + '">' + icon + '</div>' +
-                    '<div class="name">' + esc(c.name) + '</div>' +
-                    '<div class="badge">' + c.membersCount + '</div>' +
-                 '</div>';
+                return '<div class="user-item" onclick="joinChat(\'' + c.id + '\')"><div class="avatar small ' + (c.type === 'channel' ? 'channel' : '') + '">' + icon + '</div><div class="name">' + esc(c.name) + '</div><div class="badge">' + c.membersCount + '</div></div>';
             }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Нет доступных</div>';
         });
     }
 
     window.openChat = function(chatId, el) {
-        mode = 'chat';
-        currentChatId = chatId;
-        currentDmId = '';
+        mode = 'chat'; currentChatId = chatId; currentDmId = ''; currentDmPeer = null;
         currentChat = allChats.find(function(c) { return c.id === chatId; });
         document.getElementById('chatTitle').textContent = currentChat ? currentChat.name : 'Чат';
-        var subtitle = '';
-        if (currentChat) subtitle = (currentChat.type === 'channel' ? '📢 Канал' : '👥 Группа') + ' · ' + currentChat.members.length + ' участн.';
+        var subtitle = currentChat ? ((currentChat.type === 'channel' ? '📢 Канал' : '👥 Группа') + ' · ' + currentChat.members.length + ' участн.') : '';
         document.getElementById('chatSubtitle').textContent = subtitle;
         document.querySelectorAll('.user-item').forEach(function(i) { i.classList.remove('active'); });
         if (el) el.classList.add('active');
@@ -339,8 +329,7 @@
     };
 
     window.joinChat = function(chatId) {
-        fetch('/api/chats/' + chatId + '/join', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ userId: currentUser.id })})
-            .then(function(r) { return r.json(); }).then(function(data) { if (data.ok) loadChats(); });
+        fetch('/api/chats/' + chatId + '/join', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ userId: currentUser.id })}).then(function(r) { return r.json(); }).then(function(data) { if (data.ok) loadChats(); });
     };
 
     function loadMessages(scrollToBottom) {
@@ -356,25 +345,17 @@
             container.innerHTML = messages.map(function(m) {
                 var own = m.from === currentUser.id;
                 var time = new Date(m.time).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
-                return '<div class="msg ' + (own ? 'own' : 'other') + '">' +
-                    (own ? '' : '<div class="msg-author">' + esc(m.fromName) + '</div>') +
-                    '<div>' + esc(m.text) + '</div>' +
-                    '<div class="msg-time">' + time + '</div>' +
-                '</div>';
+                return '<div class="msg ' + (own ? 'own' : 'other') + '">' + (own ? '' : '<div class="msg-author">' + esc(m.fromName) + '</div>') + '<div>' + esc(m.text) + '</div><div class="msg-time">' + time + '</div></div>';
             }).join('');
             if (scrollToBottom) container.scrollTop = container.scrollHeight;
         }).catch(function(e) {});
     }
 
-    // ============ ЛИЧНЫЕ СООБЩЕНИЯ ============
     function loadDms() {
         fetch('/api/dm/list?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
             document.getElementById('dmList').innerHTML = data.dms.map(function(dm) {
-                return '<div class="user-item" onclick="openDm(\'' + dm.id + '\', \'' + esc(dm.peerName) + '\', \'' + dm.peerId + '\', this)">' +
-                    '<div class="avatar small dm">' + getInitials(dm.peerName) + '</div>' +
-                    '<div class="name">' + esc(dm.peerName) + '</div>' +
-                 '</div>';
+                return '<div class="user-item" onclick="openDm(\'' + dm.id + '\', \'' + esc(dm.peerName) + '\', \'' + dm.peerId + '\', this)"><div class="avatar small dm">' + getInitials(dm.peerName) + '</div><div class="name">' + esc(dm.peerName) + '</div></div>';
             }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Нет диалогов</div>';
         });
     }
@@ -383,27 +364,19 @@
         fetch('/api/users?myId=' + currentUser.id).then(function(r) { return r.json(); }).then(function(data) {
             if (!data.ok) return;
             document.getElementById('usersList').innerHTML = data.users.map(function(u) {
-                return '<div class="user-item">' +
-                    '<div class="avatar small">' + getInitials(u.name) + '</div>' +
-                    '<div class="name">' + esc(u.name) + '</div>' +
-                    '<button class="write-btn" onclick="startDm(\'' + u.id + '\', \'' + esc(u.name) + '\')">Написать</button>' +
-                 '</div>';
+                return '<div class="user-item"><div class="avatar small">' + getInitials(u.name) + '</div><div class="name">' + esc(u.name) + '</div><button class="write-btn" onclick="startDm(\'' + u.id + '\', \'' + esc(u.name) + '\')">Написать</button></div>';
             }).join('') || '<div style="color:#4a5a72;padding:10px;font-size:13px;">Других пользователей нет</div>';
         });
     }
 
     window.startDm = function(peerId, peerName) {
-        fetch('/api/dm/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ myId: currentUser.id, peerId: peerId })})
-            .then(function(r) { return r.json(); }).then(function(data) {
-                if (data.ok) { loadDms(); openDm(data.dmId, peerName, peerId, null); }
-            });
+        fetch('/api/dm/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ myId: currentUser.id, peerId: peerId })}).then(function(r) { return r.json(); }).then(function(data) {
+            if (data.ok) { loadDms(); openDm(data.dmId, peerName, peerId, null); }
+        });
     };
 
     window.openDm = function(dmId, peerName, peerId, el) {
-        mode = 'dm';
-        currentDmId = dmId;
-        currentDmPeer = { id: peerId, name: peerName };
-        currentChatId = '';
+        mode = 'dm'; currentDmId = dmId; currentDmPeer = { id: peerId, name: peerName }; currentChatId = '';
         document.getElementById('chatTitle').textContent = peerName;
         document.getElementById('chatSubtitle').textContent = '💬 Личное сообщение';
         document.querySelectorAll('.user-item').forEach(function(i) { i.classList.remove('active'); });
@@ -428,15 +401,11 @@
             container.innerHTML = messages.map(function(m) {
                 var own = m.from === currentUser.id;
                 var time = new Date(m.time).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
-                return '<div class="msg ' + (own ? 'own' : 'other') + '">' +
-                    '<div>' + esc(m.text) + '</div>' +
-                    '<div class="msg-time">' + time + '</div>' +
-                '</div>';
+                return '<div class="msg ' + (own ? 'own' : 'other') + '"><div>' + esc(m.text) + '</div><div class="msg-time">' + time + '</div></div>';
             }).join('');
             if (scrollToBottom) container.scrollTop = container.scrollHeight;
         }).catch(function(e) {});
     }
-
     window.sendMessage = function() {
         var input = document.getElementById('msgInput');
         var text = input.value.trim();
@@ -451,8 +420,8 @@
             url = '/api/messages';
             body = { fromId: currentUser.id, fromName: currentUser.name, chatId: currentChatId, text: text };
         }
-        fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
-            .then(function(r) { return r.json(); }).then(function(data            btn.disabled = false;
+        fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(function(r) { return r.json(); }).then(function(data) {
+            btn.disabled = false;
             if (data.ok) { input.value = ''; if (mode === 'dm') loadDmMessages(true); else loadMessages(true); }
         }).catch(function(e) { btn.disabled = false; });
     };
@@ -466,12 +435,11 @@
         var btn = document.getElementById('createChatBtn');
         if (!name) return alert('Введите название');
         btn.disabled = true;
-        fetch('/api/chats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ creatorId: currentUser.id, creatorName: currentUser.name, name: name, type: type })})
-            .then(function(r) { return r.json(); }).then(function(data) {
-                btn.disabled = false;
-                if (data.ok) { hideCreateModal(); document.getElementById('newChatName').value = ''; loadChats(); }
-                else { alert(data.error); }
-            });
+        fetch('/api/chats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ creatorId: currentUser.id, creatorName: currentUser.name, name: name, type: type })}).then(function(r) { return r.json(); }).then(function(data) {
+            btn.disabled = false;
+            if (data.ok) { hideCreateModal(); document.getElementById('newChatName').value = ''; loadChats(); }
+            else { alert(data.error); }
+        });
     };
 
     window.toggleSidebar = function() { document.getElementById('sidebar').classList.toggle('hidden-mobile'); };
